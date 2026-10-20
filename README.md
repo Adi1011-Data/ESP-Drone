@@ -22,17 +22,19 @@ This board has no barometer, magnetometer, or optical flow. Stabilize / manual f
 
 ## Simulation links
 
-The drone must already be flashed and powered. From `simulation/`:
+The local pages are served by this PC, not by the ESP. They open with the board off. From `simulation/`, start the server and leave that window open. Closing it stops port 8765, and the browser cannot open the sites.
 
 ```powershell
 .\serve.ps1
 ```
 
-| Tool | Local (after serve.ps1) | On the drone Wi-Fi |
+| Tool | Local (ESP can be off) | On the drone Wi-Fi |
 | --- | --- | --- |
 | Landing page | http://127.0.0.1:8765/ | — |
 | Attitude viewer | http://127.0.0.1:8765/viewer/ | USB or BLE from that page |
 | PID tuner | http://127.0.0.1:8765/pid/ | http://192.168.43.42/ |
+
+http://192.168.43.42/ is the ESP. It opens only when the board is on and the laptop has joined its Wi-Fi.
 
 - **Attitude viewer:** props off. Close `idf.py monitor`. Chrome or Edge. Connect USB (or BLE) and tilt the board. The on-screen quad copies the MPU6050.
 - **PID tuner:** phone stays on `ESP-DRONE_…` for sticks (UDP **2390**). Laptop joins the same AP. Open the PID link (HTTP **80**). Do not point a second CRTP client at 2390.
