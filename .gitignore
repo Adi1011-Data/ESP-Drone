@@ -1,0 +1,52 @@
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Leftover ESP-Drone tree that is not in CMakeLists.txt
+# (keep Firmware/main/src/unused and include/unused — those still compile)
+Firmware/unused/
+
+# Duplicate fab zip next to the Gerber/ folder
+**/Gerber.zip
+
+# ESP-IDF generated build output
+**/build/
+sdkconfig
+sdkconfig.old
+sdkconfig.ci
+managed_components/
+dependencies.lock
+compile_commands.json
+.cache/
+*.elf
+*.map
+*.hex
+
+# KiCad local state, autosave, and EasyEDA/KiCad history
+**/.history/
+**/.history_trim/
+*-backups/
+*.bak
+*.000
+_autosave-*
+\#auto_saved_files\#
+*.kicad_sch-bak
+*.kicad_pcb-bak
+*.kicad_prl
+*.lck
+fp-info-cache
+*.net
+*.rpt
+*.tmp
+
+# Python (simulation viewer)
+__pycache__/
+*.pyc
+.venv/
+venv/

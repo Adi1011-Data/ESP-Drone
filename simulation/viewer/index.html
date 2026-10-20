@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP-FLY attitude</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #10141a; color: #e7edf5; font-family: "Segoe UI", sans-serif; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #panel {
+    position: absolute; top: 16px; left: 16px; width: 280px;
+    background: rgba(16, 20, 26, 0.82); border: 1px solid #2c3644;
+    border-radius: 12px; padding: 14px 16px 12px; backdrop-filter: blur(8px);
+  }
+  h1 { font-size: 16px; margin: 0 0 4px; font-weight: 650; }
+  p { margin: 0 0 12px; color: #9aa8b8; font-size: 12px; line-height: 1.4; }
+  button {
+    font: inherit; font-size: 13px; border: 0; border-radius: 8px;
+    padding: 8px 12px; cursor: pointer; margin: 0 8px 8px 0;
+  }
+  #connect { background: #f27a1a; color: #1a1008; font-weight: 650; }
+  #connectBle { background: #63c5da; color: #07161a; font-weight: 650; }
+  #connect:disabled { opacity: 0.45; cursor: default; }
+  #disconnect { background: #2a3340; color: #e7edf5; }
+  .row { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; font-size: 13px; margin: 3px 0; }
+  .row span { color: #8ea0b3; }
+  #status { font-size: 12px; min-height: 16px; margin: 8px 0 4px; }
+  #status.live { color: #7ddea2; }
+  #status.wait { color: #e2b657; }
+  #status.bad { color: #f09595; }
+  label { display: block; font-size: 12px; color: #b7c3d1; margin: 4px 0; }
+  .hint { margin-top: 8px; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<div id="panel">
+  <h1>ESP-FLY attitude</h1>
+  <p>Tilt the board. The quad copies the MPU6050. Orange and yellow motors are the nose.</p>
+  <button id="connect" type="button">Connect USB</button>
+  <button id="connectBle" type="button">Connect BLE</button>
+  <button id="disconnect" type="button" hidden>Disconnect</button>
+  <div id="status" class="wait">Preview motion. Connect when the board is plugged in.</div>
+  <div class="row"><span>Roll</span><b id="roll">0.0°</b></div>
+  <div class="row"><span>Pitch</span><b id="pitch">0.0°</b></div>
+  <div class="row"><span>Yaw</span><b id="yaw">0.0°</b></div>
+  <div class="row"><span>Packets</span><b id="rate">—</b></div>
+  <label><input id="flipRoll" type="checkbox"> Invert roll</label>
+  <label><input id="flipPitch" type="checkbox"> Invert pitch</label>
+  <label><input id="flipYaw" type="checkbox"> Invert yaw</label>
+  <p class="hint">Use the checkboxes if a tilt goes the opposite way. Drag to orbit, scroll to zoom. Props stay off for this check.</p>
+</div>
+<script>
+const canvas = document.getElementById("view");
+const gl = canvas.getContext("webgl", { antialias: true, alpha: false });
+if (!gl) {
+  document.getElementById("status").textContent = "WebGL is not available in this browser.";
+  document.getElementById("status").className = "bad";
+}
+
+const vs = `
+precision mediump float;
+attribute vec3 aPos;
+attribute vec3 aNormal;
+attribute vec3 aColor;
+uniform mat4 uMvp;
+uniform mat4 uModel;
+uniform float uLit;
+varying vec3 vColor;
+varying vec3 vNormal;
+varying float vLit;
+void main() {
+  gl_Position = uMvp * vec4(aPos, 1.0);
+  vNormal = vec3(
+    dot(vec3(uModel[0].x, uModel[1].x, uModel[2].x), aNormal),
+    dot(vec3(uModel[0].y, uModel[1].y, uModel[2].y), aNormal),
+    dot(vec3(uModel[0].z, uModel[1].z, uModel[2].z), aNormal)
+  );
+  vColor = aColor;
+  vLit = uLit;
+}`;
+const fs = `
+precision mediump float;
+varying vec3 vColor;
+varying vec3 vNormal;
+varying float vLit;
+void main() {
+  vec3 n = normalize(vNormal);
+  float light = max(dot(n, normalize(vec3(0.35, -0.45, 0.82))), 0.0);
+  float shade = mix(1.0, 0.28 + 0.72 * light, vLit);
+  gl_FragColor = vec4(vColor * shade, 1.0);
+}`;
+
+function compile(type, src) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, src);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(shader));
+  }
+  return shader;
+}
+const program = gl.createProgram();
+gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+gl.linkProgram(program);
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+  throw new Error(gl.getProgramInfoLog(program));
+}
+gl.useProgram(program);
+const loc = {
+  pos: gl.getAttribLocation(program, "aPos"),
+  normal: gl.getAttribLocation(program, "aNormal"),
+  color: gl.getAttribLocation(program, "aColor"),
+  mvp: gl.getUniformLocation(program, "uMvp"),
+  model: gl.getUniformLocation(program, "uModel"),
+  lit: gl.getUniformLocation(program, "uLit")
+};
+
+const positions = [];
+const normals = [];
+const colors = [];
+function addFace(verts, normal, rgb) {
+  const [a, b, c, d] = verts;
+  const tris = [a, b, c, a, c, d];
+  for (const v of tris) {
+    positions.push(v[0], v[1], v[2]);
+    normals.push(normal[0], normal[1], normal[2]);
+    colors.push(rgb[0], rgb[1], rgb[2]);
+  }
+}
+function addBox(cx, cy, cz, sx, sy, sz, yaw, rgb) {
+  const hx = sx / 2, hy = sy / 2, hz = sz / 2;
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  const rot = (x, y, z) => [cx + x * c - y * s, cy + x * s + y * c, cz + z];
+  const nrm = (x, y, z) => [x * c - y * s, x * s + y * c, z];
+  const v = [
+    rot(-hx, -hy, -hz), rot(hx, -hy, -hz), rot(hx, hy, -hz), rot(-hx, hy, -hz),
+    rot(-hx, -hy, hz), rot(hx, -hy, hz), rot(hx, hy, hz), rot(-hx, hy, hz)
+  ];
+  addFace([v[0], v[1], v[2], v[3]], nrm(0, 0, -1), rgb);
+  addFace([v[4], v[7], v[6], v[5]], nrm(0, 0, 1), rgb);
+  addFace([v[0], v[4], v[5], v[1]], nrm(0, -1, 0), rgb);
+  addFace([v[3], v[2], v[6], v[7]], nrm(0, 1, 0), rgb);
+  addFace([v[0], v[3], v[7], v[4]], nrm(-1, 0, 0), rgb);
+  addFace([v[1], v[5], v[6], v[2]], nrm(1, 0, 0), rgb);
+}
+
+const body = [0.78, 0.82, 0.88];
+const arm = [0.55, 0.60, 0.66];
+addBox(0, 0, 0.03, 0.28, 0.18, 0.07, 0, body);
+addBox(0.2, 0, 0.035, 0.12, 0.07, 0.045, 0, [0.86, 0.28, 0.18]);
+const motors = [
+  { x: 0.52, y: 0.52, color: [1.0, 0.45, 0.12] },
+  { x: 0.52, y: -0.52, color: [0.96, 0.78, 0.22] },
+  { x: -0.46, y: 0.46, color: [0.28, 0.52, 0.92] },
+  { x: -0.46, y: -0.46, color: [0.18, 0.36, 0.72] }
+];
+for (const m of motors) {
+  const yaw = Math.atan2(m.y, m.x);
+  const reach = Math.hypot(m.x, m.y);
+  addBox(m.x * 0.48, m.y * 0.48, 0.035, reach * 0.72, 0.045, 0.03, yaw, arm);
+  addBox(m.x, m.y, 0.055, 0.16, 0.16, 0.045, 0, m.color);
+  addBox(m.x, m.y, 0.09, 0.28, 0.05, 0.012, 0.4, [0.16, 0.18, 0.2]);
+  addBox(m.x, m.y, 0.09, 0.05, 0.28, 0.012, 0.4, [0.16, 0.18, 0.2]);
+}
+const droneCount = positions.length / 3;
+
+const gridPos = [];
+const gridNrm = [];
+const gridCol = [];
+function gridVert(x, y, z, rgb) {
+  gridPos.push(x, y, z);
+  gridNrm.push(0, 0, 1);
+  gridCol.push(rgb[0], rgb[1], rgb[2]);
+}
+const ground = [0.13, 0.16, 0.2];
+gridVert(-2, -2, 0, ground); gridVert(2, -2, 0, ground); gridVert(2, 2, 0, ground);
+gridVert(-2, -2, 0, ground); gridVert(2, 2, 0, ground); gridVert(-2, 2, 0, ground);
+for (let i = -4; i <= 4; i++) {
+  const major = i % 2 === 0;
+  const rgb = major ? [0.38, 0.46, 0.56] : [0.24, 0.30, 0.38];
+  const g = i * 0.4;
+  gridVert(-1.6, g, 0.002, rgb); gridVert(1.6, g, 0.002, rgb);
+  gridVert(g, -1.6, 0.002, rgb); gridVert(g, 1.6, 0.002, rgb);
+}
+gridVert(0, 0, 0.004, [0.9, 0.3, 0.25]); gridVert(0.45, 0, 0.004, [0.9, 0.3, 0.25]);
+gridVert(0, 0, 0.004, [0.35, 0.8, 0.45]); gridVert(0, 0.45, 0.004, [0.35, 0.8, 0.45]);
+gridVert(0, 0, 0.004, [0.4, 0.65, 1]); gridVert(0, 0, 0.45, [0.4, 0.65, 1]);
+const gridTriCount = 6;
+const gridLineCount = (gridPos.length / 3) - gridTriCount;
+
+function buffer(data) {
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+  return buf;
+}
+const droneBuf = { pos: buffer(positions), nrm: buffer(normals), col: buffer(colors) };
+const gridBuf = { pos: buffer(gridPos), nrm: buffer(gridNrm), col: buffer(gridCol) };
+
+function bindMesh(mesh) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, mesh.pos);
+  gl.enableVertexAttribArray(loc.pos);
+  gl.vertexAttribPointer(loc.pos, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, mesh.nrm);
+  gl.enableVertexAttribArray(loc.normal);
+  gl.vertexAttribPointer(loc.normal, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, mesh.col);
+  gl.enableVertexAttribArray(loc.color);
+  gl.vertexAttribPointer(loc.color, 3, gl.FLOAT, false, 0, 0);
+}
+
+function mul(a, b) {
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++) {
+    for (let r = 0; r < 4; r++) {
+      o[c * 4 + r] =
+        a[r] * b[c * 4] +
+        a[4 + r] * b[c * 4 + 1] +
+        a[8 + r] * b[c * 4 + 2] +
+        a[12 + r] * b[c * 4 + 3];
+    }
+  }
+  return o;
+}
+function perspective(fov, aspect, near, far) {
+  const f = 1 / Math.tan(fov / 2);
+  const nf = 1 / (near - far);
+  return new Float32Array([
+    f / aspect, 0, 0, 0,
+    0, f, 0, 0,
+    0, 0, (far + near) * nf, -1,
+    0, 0, 2 * far * near * nf, 0
+  ]);
+}
+function lookAt(eye, center, up) {
+  const f = norm(sub(center, eye));
+  const s = norm(cross(f, up));
+  const u = cross(s, f);
+  return new Float32Array([
+    s[0], u[0], -f[0], 0,
+    s[1], u[1], -f[1], 0,
+    s[2], u[2], -f[2], 0,
+    -dot(s, eye), -dot(u, eye), dot(f, eye), 1
+  ]);
+}
+function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function cross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+function norm(a) {
+  const n = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / n, a[1] / n, a[2] / n];
+}
+function quatToMat(x, y, z, w, lift) {
+  const x2 = x + x, y2 = y + y, z2 = z + z;
+  const xx = x * x2, xy = x * y2, xz = x * z2;
+  const yy = y * y2, yz = y * z2, zz = z * z2;
+  const wx = w * x2, wy = w * y2, wz = w * z2;
+  return new Float32Array([
+    1 - (yy + zz), xy + wz, xz - wy, 0,
+    xy - wz, 1 - (xx + zz), yz + wx, 0,
+    xz + wy, yz - wx, 1 - (xx + yy), 0,
+    0, 0, lift, 1
+  ]);
+}
+function identity() {
+  return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+}
+function eulerDeg(w, x, y, z) {
+  const gx = 2 * (x * z - w * y);
+  const gy = 2 * (w * x + y * z);
+  const gz = w * w - x * x - y * y + z * z;
+  const yaw = Math.atan2(2 * (w * z + x * y), w * w + x * x - y * y - z * z);
+  const pitch = Math.asin(Math.max(-1, Math.min(1, gx)));
+  const roll = Math.atan2(gy, gz);
+  const deg = 180 / Math.PI;
+  return [roll * deg, pitch * deg, yaw * deg];
+}
+function previewQuat(t) {
+  const roll = Math.sin(t * 0.7) * 0.45;
+  const pitch = Math.sin(t * 0.45) * 0.32;
+  const yaw = t * 0.25;
+  const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2);
+  const cp = Math.cos(pitch / 2), sp = Math.sin(pitch / 2);
+  const cr = Math.cos(roll / 2), sr = Math.sin(roll / 2);
+  return [
+    cr * cp * cy + sr * sp * sy,
+    sr * cp * cy - cr * sp * sy,
+    cr * sp * cy + sr * cp * sy,
+    cr * cp * sy - sr * sp * cy
+  ];
+}
+
+let camYaw = 0.9;
+let camPitch = 0.62;
+let camDist = 2.6;
+const saved = JSON.parse(localStorage.getItem("espfly-att") || "{}");
+for (const id of ["flipRoll", "flipPitch", "flipYaw"]) {
+  if (saved[id]) document.getElementById(id).checked = true;
+}
+for (const id of ["flipRoll", "flipPitch", "flipYaw"]) {
+  document.getElementById(id).addEventListener("change", () => {
+    const next = {};
+    for (const key of ["flipRoll", "flipPitch", "flipYaw"]) next[key] = document.getElementById(key).checked;
+    localStorage.setItem("espfly-att", JSON.stringify(next));
+  });
+}
+
+let dragging = false;
+let lastX = 0, lastY = 0;
+canvas.addEventListener("pointerdown", (e) => {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener("pointerup", () => { dragging = false; });
+canvas.addEventListener("pointermove", (e) => {
+  if (!dragging) return;
+  camYaw -= (e.clientX - lastX) * 0.008;
+  camPitch = Math.max(0.15, Math.min(1.35, camPitch + (e.clientY - lastY) * 0.006));
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  camDist = Math.max(1.2, Math.min(6, camDist * (e.deltaY > 0 ? 1.08 : 0.92)));
+}, { passive: false });
+
+let liveQ = null;
+let lastPacket = 0;
+let packets = 0;
+let rateStamp = performance.now();
+let shownRate = 0;
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.floor(canvas.clientWidth * dpr);
+  canvas.height = Math.floor(canvas.clientHeight * dpr);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener("resize", resize);
+resize();
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const live = liveQ && (now - lastPacket) < 400;
+  let q = live ? liveQ.slice() : previewQuat(now / 1000);
+  if (document.getElementById("flipRoll").checked) q[1] = -q[1];
+  if (document.getElementById("flipPitch").checked) q[2] = -q[2];
+  if (document.getElementById("flipYaw").checked) q[3] = -q[3];
+  const n = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+  q = q.map((v) => v / n);
+
+  const [roll, pitch, yaw] = eulerDeg(q[0], q[1], q[2], q[3]);
+  document.getElementById("roll").textContent = roll.toFixed(1) + "°";
+  document.getElementById("pitch").textContent = pitch.toFixed(1) + "°";
+  document.getElementById("yaw").textContent = yaw.toFixed(1) + "°";
+  if (now - rateStamp > 500) {
+    shownRate = packets * 1000 / (now - rateStamp);
+    packets = 0;
+    rateStamp = now;
+    document.getElementById("rate").textContent = live ? shownRate.toFixed(0) + " /s" : "—";
+  }
+
+  const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
+  const cy = Math.cos(camYaw), sy = Math.sin(camYaw);
+  const eye = [camDist * cp * cy, camDist * cp * sy, camDist * sp];
+  const target = [0, 0, 0.35];
+  const view = lookAt(eye, target, [0, 0, 1]);
+  const proj = perspective(0.7, canvas.width / canvas.height, 0.05, 40);
+  const vp = mul(proj, view);
+  const model = quatToMat(q[1], q[2], q[3], q[0], 0.42);
+  const mvp = mul(vp, model);
+
+  gl.clearColor(0.07, 0.09, 0.12, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+
+  bindMesh(gridBuf);
+  gl.uniformMatrix4fv(loc.model, false, identity());
+  gl.uniformMatrix4fv(loc.mvp, false, vp);
+  gl.uniform1f(loc.lit, 0);
+  gl.drawArrays(gl.TRIANGLES, 0, gridTriCount);
+  gl.drawArrays(gl.LINES, gridTriCount, gridLineCount);
+
+  bindMesh(droneBuf);
+  gl.uniformMatrix4fv(loc.model, false, model);
+  gl.uniformMatrix4fv(loc.mvp, false, mvp);
+  gl.uniform1f(loc.lit, 1);
+  gl.drawArrays(gl.TRIANGLES, 0, droneCount);
+}
+requestAnimationFrame(frame);
+
+const statusEl = document.getElementById("status");
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind;
+}
+
+let port = null;
+let reader = null;
+let wantRead = false;
+let bleDevice = null;
+let bleCharacteristic = null;
+const bleServiceUuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const bleNotifyUuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+function takeAttitude(line) {
+  const match = line.match(/ATT,([-+]?\d*\.?\d+),([-+]?\d*\.?\d+),([-+]?\d*\.?\d+),([-+]?\d*\.?\d+)/);
+  if (!match) return;
+  const q = match.slice(1).map(Number);
+  if (q.some((v) => !Number.isFinite(v))) return;
+  const mag = Math.hypot(q[0], q[1], q[2], q[3]);
+  if (mag < 0.5 || mag > 1.5) return;
+  liveQ = q;
+  lastPacket = performance.now();
+  packets++;
+  setStatus("Live from the board.", "live");
+}
+
+async function readLoop() {
+  wantRead = true;
+  let carry = "";
+  const decoder = new TextDecoder();
+  try {
+    while (wantRead && port && port.readable) {
+      reader = port.readable.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done || !wantRead) break;
+          carry += decoder.decode(value, { stream: true });
+          let nl;
+          while ((nl = carry.indexOf("\n")) >= 0) {
+            takeAttitude(carry.slice(0, nl));
+            carry = carry.slice(nl + 1);
+          }
+          if (carry.length > 2048) carry = carry.slice(-128);
+        }
+      } finally {
+        reader.releaseLock();
+        reader = null;
+      }
+    }
+  } catch (err) {
+    if (wantRead) setStatus(err.message || "Serial read stopped.", "bad");
+  }
+}
+
+document.getElementById("connect").addEventListener("click", async () => {
+  if (!("serial" in navigator)) {
+    setStatus("Open this page in Microsoft Edge or Chrome.", "bad");
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    document.getElementById("connect").hidden = true;
+    document.getElementById("connectBle").hidden = true;
+    document.getElementById("disconnect").hidden = false;
+    setStatus("Port open. Waiting for ATT packets. Flash the firmware if this stays here.", "wait");
+    readLoop();
+  } catch (err) {
+    if (err.name !== "NotFoundError") setStatus(err.message || "Could not open the port.", "bad");
+  }
+});
+
+document.getElementById("connectBle").addEventListener("click", async () => {
+  if (!("bluetooth" in navigator)) {
+    setStatus("Open this page in Microsoft Edge or Chrome with Bluetooth enabled.", "bad");
+    return;
+  }
+  try {
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [
+        { namePrefix: "ESP-FLY" },
+        { name: "ESP-FLY-ATT" },
+        { services: [bleServiceUuid] }
+      ],
+      optionalServices: [bleServiceUuid]
+    });
+    bleDevice.addEventListener("gattserverdisconnected", () => {
+      bleCharacteristic = null;
+      bleDevice = null;
+      liveQ = null;
+      document.getElementById("connect").hidden = false;
+      document.getElementById("connectBle").hidden = false;
+      document.getElementById("disconnect").hidden = true;
+      setStatus("BLE disconnected.", "wait");
+    });
+
+    const server = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(bleServiceUuid);
+    bleCharacteristic = await service.getCharacteristic(bleNotifyUuid);
+    await bleCharacteristic.startNotifications();
+    const decoder = new TextDecoder();
+    bleCharacteristic.addEventListener("characteristicvaluechanged", (event) => {
+      takeAttitude(decoder.decode(event.target.value));
+    });
+
+    document.getElementById("connect").hidden = true;
+    document.getElementById("connectBle").hidden = true;
+    document.getElementById("disconnect").hidden = false;
+    setStatus("BLE open. Waiting for ATT packets.", "wait");
+  } catch (err) {
+    if (err.name !== "NotFoundError") setStatus(err.message || "Could not open BLE.", "bad");
+  }
+});
+
+document.getElementById("disconnect").addEventListener("click", async () => {
+  wantRead = false;
+  liveQ = null;
+  try { if (reader) await reader.cancel(); } catch (e) {}
+  try { if (port) await port.close(); } catch (e) {}
+  try { if (bleCharacteristic) await bleCharacteristic.stopNotifications(); } catch (e) {}
+  try { if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect(); } catch (e) {}
+  port = null;
+  bleCharacteristic = null;
+  bleDevice = null;
+  document.getElementById("connect").hidden = false;
+  document.getElementById("connectBle").hidden = false;
+  document.getElementById("disconnect").hidden = true;
+  setStatus("Preview motion. Connect when the board is plugged in.", "wait");
+});
+</script>
+</body>
+</html>

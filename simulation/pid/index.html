@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP-FLY PID</title>
+<style>
+  html, body { margin: 0; min-height: 100%; background: #10141a; color: #e7edf5; font-family: "Segoe UI", sans-serif; }
+  body { padding: 20px 18px 32px; }
+  h1 { font-size: 18px; margin: 0 0 4px; font-weight: 650; }
+  .lead { margin: 0 0 16px; color: #9aa8b8; font-size: 13px; line-height: 1.45; max-width: 720px; }
+  #status { font-size: 13px; min-height: 18px; margin: 0 0 6px; }
+  #status.live { color: #7ddea2; }
+  #status.wait { color: #e2b657; }
+  #status.bad { color: #f09595; }
+  #source { font-size: 12px; color: #8ea0b3; margin: 0 0 14px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  button, input[type="text"] {
+    font: inherit; font-size: 13px; border: 0; border-radius: 8px; padding: 8px 12px;
+  }
+  button { cursor: pointer; }
+  #save { background: #f27a1a; color: #1a1008; font-weight: 650; }
+  #defaults { background: #2a3340; color: #e7edf5; }
+  #reload { background: #2a3340; color: #e7edf5; }
+  input[type="text"] { background: #1a212b; color: #e7edf5; border: 1px solid #2c3644; width: 160px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  section {
+    background: rgba(16, 20, 26, 0.92); border: 1px solid #2c3644;
+    border-radius: 12px; padding: 14px 16px 10px;
+  }
+  section h2 { font-size: 14px; margin: 0 0 10px; font-weight: 650; }
+  .axis { margin-bottom: 12px; }
+  .axis h3 { font-size: 12px; color: #8ea0b3; margin: 0 0 6px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .gain { display: grid; grid-template-columns: 28px 1fr 72px; gap: 8px; align-items: center; margin: 4px 0; }
+  .gain label { font-size: 12px; color: #b7c3d1; }
+  input[type="range"] { width: 100%; accent-color: #f27a1a; }
+  input[type="number"] {
+    font: inherit; font-size: 12px; width: 72px; background: #1a212b; color: #e7edf5;
+    border: 1px solid #2c3644; border-radius: 6px; padding: 4px 6px;
+  }
+  .hint { margin-top: 16px; color: #9aa8b8; font-size: 12px; line-height: 1.45; max-width: 720px; }
+</style>
+</head>
+<body>
+  <h1>ESP-FLY PID</h1>
+  <p class="lead">Phone stays on the drone Wi-Fi for sticks. This page talks HTTP on port 80, not UDP 2390. Apply is live; Save keeps the tune across reboot.</p>
+  <div id="status" class="wait">Connecting to the drone…</div>
+  <div id="source">Sliders start at firmware defaults from pid_config.h. They update from the chip when Load succeeds.</div>
+  <div class="bar">
+    <input id="host" type="text" value="192.168.43.42" spellcheck="false" title="Drone IP">
+    <button id="reload" type="button">Load</button>
+    <button id="save" type="button">Save</button>
+    <button id="defaults" type="button">Restore defaults</button>
+  </div>
+  <div class="grid">
+    <section>
+      <h2>Rate (inner)</h2>
+      <div id="rate"></div>
+    </section>
+    <section>
+      <h2>Angle (outer)</h2>
+      <div id="angle"></div>
+    </section>
+  </div>
+  <p class="hint">Join <b>ESP-DRONE_…</b> on the laptop, keep the Android app connected on the phone, then drag a gain. The next 500 Hz loop uses it. No reset, no reflash.</p>
+<script>
+const AXES = ["roll", "pitch", "yaw"];
+const TERMS = ["kp", "ki", "kd"];
+const LOOPS = {
+  rate: { kp: 500, ki: 1000, kd: 50, step: { kp: 0.5, ki: 0.1, kd: 0.05 } },
+  angle: { kp: 30, ki: 30, kd: 10, step: { kp: 0.05, ki: 0.05, kd: 0.01 } }
+};
+/* Keep in sync with Firmware/main/include/board/pid_config.h */
+const DEFAULTS = {
+  rate_roll_kp: 190, rate_roll_ki: 440, rate_roll_kd: 2.6,
+  rate_pitch_kp: 190, rate_pitch_ki: 440, rate_pitch_kd: 2.6,
+  rate_yaw_kp: 120, rate_yaw_ki: 16.7, rate_yaw_kd: 0,
+  angle_roll_kp: 5.3, angle_roll_ki: 2.5, angle_roll_kd: 0,
+  angle_pitch_kp: 5.3, angle_pitch_ki: 2.5, angle_pitch_kd: 0,
+  angle_yaw_kp: 6, angle_yaw_ki: 1, angle_yaw_kd: 0.35
+};
+
+const statusEl = document.getElementById("status");
+const sourceEl = document.getElementById("source");
+const hostEl = document.getElementById("host");
+let applyTimer = 0;
+let applying = false;
+
+function apiBase() {
+  const host = hostEl.value.trim() || "192.168.43.42";
+  if (location.hostname === host) {
+    return "";
+  }
+  return "http://" + host;
+}
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind;
+}
+
+function setSource(text) {
+  sourceEl.textContent = text;
+}
+
+function fmtGain(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return "0";
+  }
+  return String(Math.round(n * 1000) / 1000);
+}
+
+function sourceFromChip(data) {
+  if (data.dirty) {
+    return "Sliders are live RAM. NVS still has the last Save until you press Save.";
+  }
+  if (data.saved) {
+    return "Sliders match NVS (what survives reboot).";
+  }
+  return "Sliders match firmware defaults. NVS is empty — Save to store them.";
+}
+
+function keyName(loop, axis, term) {
+  return loop + "_" + axis + "_" + term;
+}
+
+function buildLoop(loop) {
+  const root = document.getElementById(loop);
+  const limits = LOOPS[loop];
+  AXES.forEach((axis) => {
+    const box = document.createElement("div");
+    box.className = "axis";
+    box.innerHTML = "<h3>" + axis + "</h3>";
+    TERMS.forEach((term) => {
+      const id = keyName(loop, axis, term);
+      const start = fmtGain(DEFAULTS[id]);
+      const row = document.createElement("div");
+      row.className = "gain";
+      row.innerHTML =
+        "<label>" + term.toUpperCase() + "</label>" +
+        "<input type='range' id='" + id + "_s' min='0' max='" + limits[term] +
+        "' step='" + limits.step[term] + "' value='" + start + "'>" +
+        "<input type='number' id='" + id + "' min='0' max='" + limits[term] +
+        "' step='" + limits.step[term] + "' value='" + start + "'>";
+      box.appendChild(row);
+    });
+    root.appendChild(box);
+  });
+}
+
+function readForm() {
+  const body = {};
+  ["rate", "angle"].forEach((loop) => {
+    AXES.forEach((axis) => {
+      TERMS.forEach((term) => {
+        const id = keyName(loop, axis, term);
+        body[id] = Number(document.getElementById(id).value);
+      });
+    });
+  });
+  return body;
+}
+
+function fillForm(data) {
+  ["rate", "angle"].forEach((loop) => {
+    AXES.forEach((axis) => {
+      TERMS.forEach((term) => {
+        const id = keyName(loop, axis, term);
+        if (data[id] == null) {
+          return;
+        }
+        const value = fmtGain(data[id]);
+        document.getElementById(id).value = value;
+        document.getElementById(id + "_s").value = value;
+      });
+    });
+  });
+}
+
+async function call(path, options) {
+  const response = await fetch(apiBase() + path, options);
+  if (!response.ok) {
+    throw new Error(path + " " + response.status);
+  }
+  return response.json();
+}
+
+async function loadPid() {
+  setStatus("Loading gains from the drone…", "wait");
+  const data = await call("/api/pid");
+  fillForm(data);
+  setStatus("Connected. Sliders show the values on the chip.", "live");
+  setSource(sourceFromChip(data));
+}
+
+async function applyPid() {
+  if (applying) {
+    return;
+  }
+  applying = true;
+  try {
+    const data = await call("/api/pid", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(readForm())
+    });
+    fillForm(data);
+    setStatus("Applied. Next loop uses these gains.", "live");
+    setSource(sourceFromChip(data));
+  } catch (err) {
+    setStatus("Apply failed. Join the drone Wi-Fi. " + err.message, "bad");
+  } finally {
+    applying = false;
+  }
+}
+
+function scheduleApply() {
+  clearTimeout(applyTimer);
+  applyTimer = setTimeout(applyPid, 150);
+}
+
+function bindInputs() {
+  ["rate", "angle"].forEach((loop) => {
+    AXES.forEach((axis) => {
+      TERMS.forEach((term) => {
+        const id = keyName(loop, axis, term);
+        const number = document.getElementById(id);
+        const slider = document.getElementById(id + "_s");
+        slider.addEventListener("input", () => {
+          number.value = slider.value;
+          scheduleApply();
+        });
+        number.addEventListener("input", () => {
+          slider.value = number.value;
+          scheduleApply();
+        });
+      });
+    });
+  });
+}
+
+buildLoop("rate");
+buildLoop("angle");
+bindInputs();
+
+if (location.hostname && location.hostname !== "127.0.0.1" && location.hostname !== "localhost") {
+  hostEl.value = location.hostname;
+}
+
+document.getElementById("reload").addEventListener("click", () => {
+  loadPid().catch((err) => {
+    fillForm(DEFAULTS);
+    setStatus("Not connected. Join ESP-DRONE Wi-Fi. " + err.message, "bad");
+    setSource("Showing firmware defaults. NVS on the chip was not read.");
+  });
+});
+document.getElementById("save").addEventListener("click", async () => {
+  try {
+    await applyPid();
+    const data = await call("/api/pid/save", { method: "POST" });
+    fillForm(data);
+    setStatus("Saved to NVS. Survives reboot.", "live");
+    setSource(sourceFromChip(data));
+  } catch (err) {
+    setStatus("Save failed. " + err.message, "bad");
+  }
+});
+document.getElementById("defaults").addEventListener("click", async () => {
+  try {
+    const data = await call("/api/pid/defaults", { method: "POST" });
+    fillForm(data);
+    setStatus("Restored pid_config.h factory defaults on the chip.", "live");
+    setSource(sourceFromChip(data));
+  } catch (err) {
+    setStatus("Restore failed. " + err.message, "bad");
+  }
+});
+
+fillForm(DEFAULTS);
+loadPid().catch((err) => {
+  fillForm(DEFAULTS);
+  setStatus("Not connected. Join ESP-DRONE Wi-Fi, then Load. " + err.message, "bad");
+  setSource("Showing firmware defaults until the drone answers. Then sliders follow NVS or factory on the chip.");
+});
+</script>
+</body>
+</html>

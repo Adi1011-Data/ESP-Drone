@@ -1,0 +1,17 @@
+"Id";"Designator";"Footprint";"Quantity";"Designation";"Supplier and ref";
+1;"C1";"C_0402_1005Metric_Pad0.74x0.62mm_HandSolder";1;"2.2nF";;;
+2;"C2, C4";"C_0402_1005Metric_Pad0.74x0.62mm_HandSolder";2;"0.1uF";;;
+3;"C3";"C_0402_1005Metric_Pad0.74x0.62mm_HandSolder";1;"10nF";;;
+4;"C5, C6, C7, C8, C9, C10, C11, C12, C13";"C_0402_1005Metric_Pad0.74x0.62mm_HandSolder";9;"100nF";;;
+5;"C14";"C_0402_1005Metric_Pad0.74x0.62mm_HandSolder";1;"100uF";;;
+6;"D1, D2, D3, D4";"D_SOD-323_HandSoldering";4;"SS14";;;
+7;"D5, D6";"LED_0402_1005Metric_Pad0.77x0.64mm_HandSolder";2;"LED";;;
+8;"J1, J3";"PinHeader_1x07_P2.54mm_Vertical";2;"Conn_01x07_Pin";;;
+9;"Q1, Q2, Q3, Q4";"SOT-23";4;"AO3400A";;;
+10;"R1, R2, R3, R4, R5, R6";"R_0402_1005Metric_Pad0.72x0.64mm_HandSolder";6;"10k";;;
+11;"R7, R8, R9, R10";"R_0402_1005Metric_Pad0.72x0.64mm_HandSolder";4;"100R";;;
+12;"R11, R12";"R_0402_1005Metric_Pad0.72x0.64mm_HandSolder";2;"100k";;;
+13;"R13, R14";"R_0402_1005Metric_Pad0.72x0.64mm_HandSolder";2;"1.5k";;;
+14;"TP1, TP3, TP5, TP7, TP9";"TestPoint_Pad_1.0x1.0mm";5;"TestPoint_Small";;;
+15;"TP2, TP4, TP6, TP8, TP10";"TestPoint_Pad_D1.0mm";5;"TestPoint_Small";;;
+16;"U1";"InvenSense_QFN-24_4x4mm_P0.5mm";1;"MPU-6050";;;
