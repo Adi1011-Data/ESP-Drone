@@ -6,7 +6,7 @@
  * and can Save the values to NVS. These defines are the restore-
  * defaults set and the first-boot values when nothing is saved.
  *
- * Starting point is the ESP-FLY / ESP32-S2 micro brushed-quad tune.
+ * Starting point is the ESP-Drone / ESP32-S2 micro brushed-quad tune.
  */
 #ifndef PID_CONFIG_H_
 #define PID_CONFIG_H_

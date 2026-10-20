@@ -11,7 +11,7 @@ if (-not $python) {
   exit 1
 }
 
-Write-Host "ESP-FLY tools:    http://127.0.0.1:8765/"
+Write-Host "ESP-Drone tools:    http://127.0.0.1:8765/"
 Write-Host "Attitude viewer:  http://127.0.0.1:8765/viewer/"
 Write-Host "PID tuner:        http://127.0.0.1:8765/pid/"
 Write-Host "Leave this window open. Close it to stop the server."

@@ -2,7 +2,7 @@
 
 Flight firmware for the XIAO ESP32-C3 ESC board. Full build, parts, and first-flight notes: [../README.md](../README.md). Flash method: [FLASHING.md](FLASHING.md).
 
-It is the [ESP-FLY](https://github.com/Seeed-Projects/Co-Create_ESP-FLY) tree (itself a tested modification of [Circuit Digest ESP-Drone](https://github.com/Circuit-Digest/ESP-Drone) and Espressif ESP-Drone), retargeted from the ESP32-S3 in [Max Imagination's build video](https://youtu.be/V_mZsiZcy7s) to the ESP32-C3.
+It is [Circuit Digest ESP-Drone](https://github.com/Circuit-Digest/ESP-Drone) / Espressif ESP-Drone, retargeted from the ESP32-S3 to the ESP32-C3.
 
 ## Simulation links
 
@@ -74,7 +74,7 @@ $venv = "E:\Drone-ESC\downloads\Espressif\python_env\idf5.0_py3.11_env\Scripts"
 $env:PATH = "$venv;" + $env:PATH
 . "$env:IDF_PATH\export.ps1"
 
-cd E:\Drone-ESC\ESP-FLY\Firmware
+# Run from the Firmware directory
 idf.py set-target esp32c3
 idf.py build
 ```

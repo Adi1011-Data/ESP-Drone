@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ESP-FLY attitude</title>
+<title>ESP-Drone attitude</title>
 <style>
   html, body { margin: 0; height: 100%; background: #10141a; color: #e7edf5; font-family: "Segoe UI", sans-serif; overflow: hidden; }
   canvas { display: block; width: 100%; height: 100%; }
@@ -35,7 +35,7 @@
 <body>
 <canvas id="view"></canvas>
 <div id="panel">
-  <h1>ESP-FLY attitude</h1>
+  <h1>ESP-Drone attitude</h1>
   <p>Tilt the board. The quad copies the MPU6050. Orange and yellow motors are the nose.</p>
   <button id="connect" type="button">Connect USB</button>
   <button id="connectBle" type="button">Connect BLE</button>
@@ -477,8 +477,8 @@ document.getElementById("connectBle").addEventListener("click", async () => {
   try {
     bleDevice = await navigator.bluetooth.requestDevice({
       filters: [
-        { namePrefix: "ESP-FLY" },
-        { name: "ESP-FLY-ATT" },
+        { namePrefix: "ESP-Drone" },
+        { name: "ESP-Drone-ATT" },
         { services: [bleServiceUuid] }
       ],
       optionalServices: [bleServiceUuid]

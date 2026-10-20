@@ -1,6 +1,6 @@
-# ESP-FLY (XIAO ESP32-C3)
+# ESP-Drone (XIAO ESP32-C3)
 
-A 1S brushed micro quad. The Seeed XIAO ESP32-C3 is the flight controller. A custom ESC board holds the MPU6050 and four MOSFET motor channels. You fly from the ESP-Drone phone app over the XIAO’s Wi-Fi. This tree is [ESP-FLY](https://github.com/Seeed-Projects/Co-Create_ESP-FLY) / [Circuit Digest ESP-Drone](https://github.com/Circuit-Digest/ESP-Drone) / Espressif ESP-Drone, retargeted from the ESP32-S3 to the ESP32-C3.
+A 1S brushed micro quad. The Seeed XIAO ESP32-C3 is the flight controller. A custom ESC board holds the MPU6050 and four MOSFET motor channels. You fly from the ESP-Drone phone app over the XIAO’s Wi-Fi. This tree is [Circuit Digest ESP-Drone](https://github.com/Circuit-Digest/ESP-Drone) / Espressif ESP-Drone, retargeted from the ESP32-S3 to the ESP32-C3.
 
 Read this page before soldering, installing tools, or flashing.
 
@@ -63,40 +63,6 @@ Factory PID: [Firmware/main/include/board/pid_config.h](Firmware/main/include/bo
 
 Tune **Rate** (inner) until it is calm, then **Angle** (outer). Rate is “don’t wobble.” Angle is “follow the stick.”
 
-## What to buy / make
-
-### Flight stack
-
-| Item | Notes |
-| --- | --- |
-| Seeed XIAO ESP32-C3 | Plugs into J1 and J3. USB-C toward 5V / D0. |
-| This ESC PCB | [hardware/PCB/ESC](hardware/PCB/ESC). Gerbers in `Gerber/`. KiCad 10. |
-| MPU-6050 (U1) | Already on the ESC schematic |
-| AO3400A × 4 | Motor FETs |
-| SS14 × 4 (SOD-323) | Flyback diodes |
-| 720 coreless motors × 4 | Two CW, two CCW if the props require it |
-| 1S LiPo (about 250–300 mAh) | BAT pads. Do not reverse the pack. |
-| Props matched to the motors | Stay off until motors are checked on the bench |
-| Frame | 50–80 mm whoop / printed frame that holds the board |
-| USB-C **data** cable | Charge-only cables will not flash |
-
-Full passives are in [hardware/PCB/ESC/Gerber/ESC-BOM.csv](hardware/PCB/ESC/Gerber/ESC-BOM.csv). Board photos and assembly: [hardware/PCB/ESC/README.md](hardware/PCB/ESC/README.md).
-
-### Firmware pinout (what this tree actually flies)
-
-Seat the XIAO with USB toward 5V / D0. D9 (BOOT) is not a motor.
-
-| Mixer | Board | XIAO | GPIO |
-| --- | --- | --- | --- |
-| M1 front-left | MOT1 | D0 | GPIO2 |
-| M2 front-right | MOT2 | D10 | GPIO10 |
-| M3 rear-right | MOT3 | D1 | GPIO3 |
-| M4 rear-left | MOT4 | D3 | GPIO5 |
-
-MPU6050: SDA D4 / GPIO6, SCL D5 / GPIO7, INT D7 / GPIO20. Battery sense: D2 / GPIO4 (100k / 100k, firmware ×2).
-
-D8 and D9 are strap pins. Leave D9 free for the BOOT button.
-
 ## Downloads and tools (do this before flashing)
 
 Work on Windows. Scripts and paths in this repo assume the tools live on **E:** under `Drone-ESC\downloads`. Anaconda Python must not be the `python` that ESP-IDF finds.
@@ -114,7 +80,7 @@ Work on Windows. Scripts and paths in this repo assume the tools live on **E:** 
 
    In the installer: keep PowerShell selected, select the **ESP32-C3** target. Tools land in `downloads\Espressif`. The IDF tree is `downloads\Espressif\frameworks\esp-idf-v5.0.7`. The Python venv is `downloads\Espressif\python_env\idf5.0_py3.11_env`.
 
-3. **Phone app** — [ESP-Drone 0.7.3 for Android](https://www.pgyer.com/a27L). Same app as ESP-FLY / Circuit Digest. Do not change drone IP `192.168.43.42` or UDP port `2390`.
+3. **Phone app** — [ESP-Drone 0.7.3 for Android](https://www.pgyer.com/a27L). Do not change drone IP `192.168.43.42` or UDP port `2390`.
 
 4. **Browser** — Chrome or Edge for the attitude viewer (Web Serial / Web Bluetooth).
 
@@ -124,47 +90,17 @@ Work on Windows. Scripts and paths in this repo assume the tools live on **E:** 
 
 You do not need Node, Docker, or a second copy of ESP-IDF.
 
-## Build
+## Build and flash
 
-In an ESP-IDF PowerShell (installer shortcut, or `export.ps1` after pointing PATH at the 3.11 venv):
+From the repo root, in an ESP-IDF 5.0.7 shell (see the installer notes above):
 
 ```powershell
-$env:IDF_TOOLS_PATH = "E:\Drone-ESC\downloads\Espressif"
-$env:IDF_PATH = "E:\Drone-ESC\downloads\Espressif\frameworks\esp-idf-v5.0.7"
-$venv = "E:\Drone-ESC\downloads\Espressif\python_env\idf5.0_py3.11_env\Scripts"
-$env:PATH = "$venv;" + $env:PATH
-. "$env:IDF_PATH\export.ps1"
-
-cd E:\Drone-ESC\ESP-FLY\Firmware
+cd Firmware
 idf.py set-target esp32c3
 idf.py build
 ```
 
-The image is `Firmware\build\ESPDrone.bin`. Edit `drone_config.h` / `pid_config.h` only when the factory set should change, then rebuild.
-
-## Flash
-
-`idf.py flash` does **not** work on this XIAO. The USB port is the chip’s own Serial/JTAG (`VID 303A`, `PID 1001`). Use esptool with `usb_reset` as in [Firmware/FLASHING.md](Firmware/FLASHING.md).
-
-Unplug the battery if props are on. In download mode the motor gates can turn on.
-
-Find the COM port:
-
-```powershell
-Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -match 'VID_303A' } | Select-Object Status, FriendlyName, InstanceId
-```
-
-Then, from `Firmware\build`, with `COMx` replaced:
-
-```powershell
-$py = "E:\Drone-ESC\downloads\Espressif\python_env\idf5.0_py3.11_env\Scripts\python.exe"
-$esptool = "E:\Drone-ESC\downloads\Espressif\frameworks\esp-idf-v5.0.7\components\esptool_py\esptool\esptool.py"
-& $py $esptool --chip esp32c3 -p COMx -b 460800 --before usb_reset --after hard_reset --connect-attempts 5 --no-stub write_flash --flash_mode dio --flash_freq 80m --flash_size 4MB 0x0 bootloader\bootloader.bin 0x8000 partition_table\partition-table.bin 0x10000 ESPDrone.bin
-```
-
-A good boot log: MPU6050 connected, `ESP-DRONE_…` AP, `ready to fly`. Warnings for baro / mag / flow are expected.
-
-Fallback if `usb_reset` fails: hold BOOT, tap RESET, flash with `--before no_reset`. Details in FLASHING.md.
+The image is `Firmware\build\ESPDrone.bin`. `idf.py flash` does not work on this XIAO. Flash with esptool and `usb_reset`, as in [Firmware/FLASHING.md](Firmware/FLASHING.md). Unplug the battery if props are on.
 
 ## Bring-up order (props off)
 
@@ -193,4 +129,4 @@ SSID prefix and password are in `drone_config.h`. Do not change the IP or UDP po
 | [simulation](simulation) | Attitude viewer and PID tuner |
 | [hardware/PCB/ESC](hardware/PCB/ESC) | Schematic, PCB, Gerbers, BOM |
 
-Upstream: [Max Imagination’s ESP-FLY video](https://youtu.be/V_mZsiZcy7s). This board is C3, not S3.
+Upstream video: [youtu.be/V_mZsiZcy7s](https://youtu.be/V_mZsiZcy7s). This board is C3, not S3.

@@ -1,6 +1,6 @@
 /**
  * Non-blocking USB-C stream of the fused MPU6050 quaternion.
- * The viewer in ESP-FLY/simulation/viewer reads lines of the form:
+ * The viewer in ESP-Drone/simulation/viewer reads lines of the form:
  *   ATT,<w>,<x>,<y>,<z>
  */
 #ifndef ATTITUDE_USB_H_

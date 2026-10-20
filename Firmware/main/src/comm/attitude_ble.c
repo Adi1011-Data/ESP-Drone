@@ -22,7 +22,7 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
-#define ATT_BLE_DEVICE_NAME "ESP-FLY-ATT"
+#define ATT_BLE_DEVICE_NAME "ESP-Drone-ATT"
 
 static const char *TAG = "ATT_BLE";
 
@@ -87,7 +87,7 @@ static void attitude_ble_advertise(void)
   struct ble_hs_adv_fields rsp;
   int rc;
 
-  /* Legacy advertising is 31 bytes. Flags + "ESP-FLY-ATT" fits; a 128-bit
+  /* Legacy advertising is 31 bytes. Flags + "ESP-Drone-ATT" fits; a 128-bit
    * UUID does not fit in the same packet, so it goes in the scan response.
    * Web Bluetooth namePrefix needs the complete name in the advertisement.
    */

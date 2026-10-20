@@ -8,7 +8,7 @@ This board is a Seeed XIAO ESP32-C3. Its USB port is the chip's own USB Serial/J
 
 Use esptool directly with `--before usb_reset` and `--no-stub`. This entered download mode and completed a verified flash with no BOOT button held. A later flash of the motor hold-off image used the same command and also verified.
 
-From `E:\Drone-ESC\ESP-FLY\Firmware\build`, after `idf.py build`:
+From `Firmware\build`, after `idf.py build`:
 
 ```powershell
 $py = "E:\Drone-ESC\downloads\Espressif\python_env\idf5.0_py3.11_env\Scripts\python.exe"
@@ -65,7 +65,7 @@ Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 Remove-Item Env:PYTHONHOME -ErrorAction SilentlyContinue
 $venv = "E:\Drone-ESC\downloads\Espressif\python_env\idf5.0_py3.11_env\Scripts"
 $env:PATH = "$venv;" + $env:PATH
-Set-Location "E:\Drone-ESC\ESP-FLY\Firmware"
+# Run from the Firmware directory
 . "$env:IDF_PATH\export.ps1"
 idf.py build
 ```
